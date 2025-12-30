@@ -15,7 +15,10 @@ streamlit run generator_app/app.py
 Run it on a server for remote access (replace `SERVER_IP` with your machine's address):
 ```bash
 pip install -r requirements.txt
+# macOS/Linux/Git Bash/WSL
 ./scripts/run_generator_server.sh
+# Windows Command Prompt/PowerShell
+scripts\run_generator_server.bat
 # Then visit http://SERVER_IP:3000 from your laptop
 ```
 
@@ -34,7 +37,10 @@ streamlit run labeler_app/app.py
 Run it on a server for remote access (uses port 3001 to avoid clashing with the generator):
 ```bash
 pip install -r requirements.txt
+# macOS/Linux/Git Bash/WSL
 ./scripts/run_labeler_server.sh
+# Windows Command Prompt/PowerShell
+scripts\run_labeler_server.bat
 # Then visit http://SERVER_IP:3001 from your laptop
 ```
 
