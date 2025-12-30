@@ -1,6 +1,6 @@
 # Image Generator Workspace
 
-This repository contains two lightweight Streamlit applications that let you experiment with training and labeling image data using simple, local workflows.
+This repository contains two lightweight Flask applications that let you experiment with training and labeling image data using simple, local workflows that run on any machine (no Streamlit required).
 
 ## Folder 1 – Trainable Image Generator (`generator_app`)
 * **Generate an image**: Enter a prompt to create a placeholder image that encodes the text into a colorized background. The image renders directly in the UI.
@@ -9,17 +9,18 @@ This repository contains two lightweight Streamlit applications that let you exp
 Run the app locally:
 ```bash
 pip install -r requirements.txt
-streamlit run generator_app/app.py
+python generator_app/app.py
+# Open http://localhost:8000
 ```
 
-Run it on a server for remote access (replace `SERVER_IP` with your machine's address):
+Run it on a server for remote access (replace `SERVER_IP` with your machine's address). The default port is `8000`, but you can override it by setting `GENERATOR_PORT`:
 ```bash
 pip install -r requirements.txt
 # macOS/Linux/Git Bash/WSL
 ./scripts/run_generator_server.sh
 # Windows Command Prompt/PowerShell
 scripts\run_generator_server.bat
-# Then visit http://SERVER_IP:3000 from your laptop
+# Then visit http://SERVER_IP:8000 from your laptop
 ```
 
 ## Folder 2 – Image Labeler (`labeler_app`)
@@ -31,21 +32,22 @@ scripts\run_generator_server.bat
 Run the app locally:
 ```bash
 pip install -r requirements.txt
-streamlit run labeler_app/app.py
+python labeler_app/app.py
+# Open http://localhost:8001
 ```
 
-Run it on a server for remote access (uses port 3001 to avoid clashing with the generator):
+Run it on a server for remote access (default port `8001`; override with `LABELER_PORT`):
 ```bash
 pip install -r requirements.txt
 # macOS/Linux/Git Bash/WSL
 ./scripts/run_labeler_server.sh
 # Windows Command Prompt/PowerShell
 scripts\run_labeler_server.bat
-# Then visit http://SERVER_IP:3001 from your laptop
+# Then visit http://SERVER_IP:8001 from your laptop
 ```
 
 ## Dependencies
-Both apps rely on [Streamlit](https://streamlit.io/) for the GUI and [Pillow](https://python-pillow.org/) for basic image handling. Install them with:
+Both apps rely on [Flask](https://flask.palletsprojects.com/) for the GUI and [Pillow](https://python-pillow.org/) for basic image handling. Install them with:
 ```bash
 pip install -r requirements.txt
 ```
