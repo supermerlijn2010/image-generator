@@ -1,11 +1,13 @@
 import base64
+import io
 import json
 import os
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-from flask import Flask, flash, redirect, render_template_string, request, url_for
+from flask import Flask, flash, redirect, render_template_string, request, send_file, url_for
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
@@ -47,12 +49,32 @@ def _save_labels(name: str, labels: Dict[str, List[str]]) -> Path:
     return output_path
 
 
+def _labels_to_keyword_zip(labels: Dict[str, List[str]]) -> bytes:
+    memory_file = io.BytesIO()
+    with zipfile.ZipFile(memory_file, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for filename, values in labels.items():
+            stem = Path(filename).stem
+            content = ", ".join(values)
+            archive.writestr(f"{stem}.txt", content)
+    memory_file.seek(0)
+    return memory_file.getvalue()
+
+
 def _auto_label(images: List[Tuple[str, Path]], keywords: List[str]) -> Dict[str, List[str]]:
     labels: Dict[str, List[str]] = {}
     for filename, _ in images:
         matched = [kw for kw in keywords if kw.lower() in filename.lower()]
         labels[filename] = matched
     return labels
+
+
+def _zip_images(images: List[Tuple[str, Path]]) -> bytes:
+    memory_file = io.BytesIO()
+    with zipfile.ZipFile(memory_file, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for filename, path in images:
+            archive.write(path, arcname=filename)
+    memory_file.seek(0)
+    return memory_file.getvalue()
 
 
 def reset_manual_labels():
@@ -126,6 +148,30 @@ def label_image():
         return redirect(url_for("index"))
 
     return redirect(url_for("index"))
+
+
+@app.route("/download-keywords", methods=["GET"])
+def download_keywords():
+    labels = APP_STATE.get("manual_labels", {})
+    if not labels:
+        flash("No labels available. Run auto labeling or manual labeling first.", "error")
+        return redirect(url_for("index"))
+    keyword_zip = _labels_to_keyword_zip(labels)
+    memory_file = io.BytesIO(keyword_zip)
+    download_name = "keywords-for-training.zip"
+    return send_file(memory_file, as_attachment=True, download_name=download_name, mimetype="application/zip")
+
+
+@app.route("/download-images", methods=["GET"])
+def download_images():
+    images: List[Tuple[str, Path]] = APP_STATE.get("images", [])
+    if not images:
+        flash("Upload a dataset first to download images.", "error")
+        return redirect(url_for("index"))
+    image_zip = _zip_images(images)
+    memory_file = io.BytesIO(image_zip)
+    download_name = "images-for-training.zip"
+    return send_file(memory_file, as_attachment=True, download_name=download_name, mimetype="application/zip")
 
 
 @app.route("/")
@@ -216,6 +262,15 @@ TEMPLATE = """
     <form method=\"post\" action=\"{{ url_for('auto_label') }}\">
       <button type=\"submit\">Run auto labeling</button>
     </form>
+    <div style=\"margin-top:0.5rem;\">
+      <form method=\"get\" action=\"{{ url_for('download_images') }}\" style=\"display:inline;\">
+        <button type=\"submit\">Download images ZIP</button>
+      </form>
+      <form method=\"get\" action=\"{{ url_for('download_keywords') }}\" style=\"display:inline; margin-left:0.5rem;\">
+        <button type=\"submit\">Download keywords ZIP</button>
+      </form>
+      <p style=\"color:#555; margin-top:0.5rem;\">Downloads mirror the folder 1 training format: images (PNG/JPG) and matching .txt keyword files.</p>
+    </div>
   </div>
 
   <div class=\"section\">

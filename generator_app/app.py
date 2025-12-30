@@ -6,7 +6,7 @@ import tempfile
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Set
 
 from flask import Flask, flash, redirect, render_template_string, request, send_file, url_for
 from PIL import Image, ImageDraw, ImageFont
@@ -17,6 +17,7 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("GENERATOR_APP_SECRET", "dev-secret-key")
+LAST_GENERATED = {"prompt": None, "image_bytes": None, "filename": None}
 
 
 def _seed_from_prompt(prompt: str) -> int:
@@ -58,6 +59,14 @@ def _extract_upload(upload) -> Path:
     return temp_dir
 
 
+def _collect_files(directory: Path, allowed_suffixes: Set[str]) -> List[Path]:
+    files: List[Path] = []
+    for path in directory.rglob("*"):
+        if path.suffix.lower() in allowed_suffixes:
+            files.append(path)
+    return files
+
+
 def _image_to_base64(image: Image.Image) -> str:
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
@@ -73,6 +82,12 @@ def generate_image():
         return redirect(url_for("index"))
 
     image = _generate_placeholder_image(prompt)
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    buffer.seek(0)
+    timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    filename = f"generated-{timestamp}.png"
+    LAST_GENERATED.update({"prompt": prompt, "image_bytes": buffer.getvalue(), "filename": filename})
     encoded = _image_to_base64(image)
     flash("Image created below.", "success")
     return render_template_string(
@@ -85,43 +100,91 @@ def generate_image():
 
 @app.route("/train", methods=["POST"])
 def train_model():
-    uploaded_zip = request.files.get("dataset")
-    keyword_text = request.form.get("keywords", "")
-    description_json = request.form.get("descriptions", "")
+    images_zip = request.files.get("images_zip")
+    keywords_zip = request.files.get("keywords_zip")
 
-    if not uploaded_zip or uploaded_zip.filename == "":
-        flash("Upload a ZIP file to start training.", "error")
+    if not images_zip or images_zip.filename == "":
+        flash("Upload the images ZIP to start training.", "error")
+        return redirect(url_for("index"))
+    if not keywords_zip or keywords_zip.filename == "":
+        flash("Upload the keywords ZIP to start training.", "error")
         return redirect(url_for("index"))
 
     try:
-        extracted = _extract_upload(uploaded_zip)
+        images_dir = _extract_upload(images_zip)
+        keywords_dir = _extract_upload(keywords_zip)
     except zipfile.BadZipFile:
-        flash("Could not read that ZIP file. Please re-upload.", "error")
+        flash("Could not read one of the ZIP files. Please re-upload.", "error")
         return redirect(url_for("index"))
 
-    keywords = [item.strip() for item in keyword_text.split(",") if item.strip()]
-    descriptions: Dict[str, str] = {}
-    if description_json:
-        try:
-            descriptions = json.loads(description_json)
-        except json.JSONDecodeError:
-            flash("Descriptions JSON could not be parsed. Check the formatting.", "error")
-            return redirect(url_for("index"))
+    image_files = _collect_files(images_dir, {".png", ".jpg", ".jpeg", ".bmp", ".gif"})
+    keyword_files = _collect_files(keywords_dir, {".txt"})
+
+    if not image_files:
+        flash("No images found in the images ZIP.", "error")
+        return redirect(url_for("index"))
+    if not keyword_files:
+        flash("No keyword text files found in the keywords ZIP.", "error")
+        return redirect(url_for("index"))
+
+    keyword_map = {path.stem: path for path in keyword_files}
 
     run_dir = DATA_DIR / datetime.utcnow().strftime("%Y%m%d-%H%M%S")
-    run_dir.mkdir(parents=True, exist_ok=True)
+    images_out = run_dir / "images"
+    keywords_out = run_dir / "keywords"
+    images_out.mkdir(parents=True, exist_ok=True)
+    keywords_out.mkdir(parents=True, exist_ok=True)
 
-    images_copied = 0
-    for path in extracted.rglob("*"):
-        if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp", ".gif"}:
-            destination = run_dir / path.name
-            destination.write_bytes(path.read_bytes())
-            images_copied += 1
+    matched = 0
+    missing = []
+    for image_path in image_files:
+        stem = image_path.stem
+        dest_img = images_out / image_path.name
+        dest_img.write_bytes(image_path.read_bytes())
 
-    _save_training_metadata(run_dir, keywords, descriptions)
-    message = f"Training data prepared with {images_copied} images. Data stored at {run_dir}."
+        keyword_path = keyword_map.get(stem)
+        if keyword_path:
+            dest_kw = keywords_out / f"{stem}.txt"
+            dest_kw.write_bytes(keyword_path.read_bytes())
+            matched += 1
+        else:
+            missing.append(image_path.name)
+
+    _save_training_metadata(run_dir, keywords=[], descriptions={"missing_keywords": missing})
+    message = (
+        f"Training data prepared. Images: {len(image_files)}, keyword files copied: {matched}. "
+        f"Missing keyword files for {len(missing)} images. Data stored at {run_dir}."
+    )
     flash(message, "success")
     return render_template_string(TEMPLATE, generated_image=None, prompt=None, train_status=message)
+
+
+@app.route("/download/generated/images.zip")
+def download_generated_images():
+    if not LAST_GENERATED["image_bytes"]:
+        flash("Generate an image first to download it.", "error")
+        return redirect(url_for("index"))
+    memory_file = io.BytesIO()
+    with zipfile.ZipFile(memory_file, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(LAST_GENERATED["filename"], LAST_GENERATED["image_bytes"])
+    memory_file.seek(0)
+    download_name = "generated-images.zip"
+    return send_file(memory_file, as_attachment=True, download_name=download_name, mimetype="application/zip")
+
+
+@app.route("/download/generated/keywords.zip")
+def download_generated_keywords():
+    if not LAST_GENERATED["image_bytes"] or not LAST_GENERATED["prompt"]:
+        flash("Generate an image first to download keywords.", "error")
+        return redirect(url_for("index"))
+    stem = Path(LAST_GENERATED["filename"]).stem
+    keyword_content = LAST_GENERATED["prompt"]
+    memory_file = io.BytesIO()
+    with zipfile.ZipFile(memory_file, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(f"{stem}.txt", keyword_content)
+    memory_file.seek(0)
+    download_name = "generated-keywords.zip"
+    return send_file(memory_file, as_attachment=True, download_name=download_name, mimetype="application/zip")
 
 
 @app.route("/")
@@ -169,21 +232,24 @@ TEMPLATE = """
     </form>
     {% if generated_image %}
       <img src=\"{{ generated_image }}\" alt=\"Generated image\" />
+      <div style=\"margin-top:0.5rem;\">
+        <a href=\"{{ url_for('download_generated_images') }}\">Download images ZIP</a>
+        &nbsp;|&nbsp;
+        <a href=\"{{ url_for('download_generated_keywords') }}\">Download keywords ZIP</a>
+      </div>
     {% endif %}
   </div>
 
   <div class=\"section\">
     <h2>Option 2: Train the image model</h2>
     <form method=\"post\" action=\"{{ url_for('train_model') }}\" enctype=\"multipart/form-data\">
-      <label for=\"dataset\">Upload a ZIP file with images</label>
-      <input type=\"file\" id=\"dataset\" name=\"dataset\" accept=\".zip\" />
+      <label for=\"images_zip\">Upload images ZIP (e.g., image0001.png)</label>
+      <input type=\"file\" id=\"images_zip\" name=\"images_zip\" accept=\".zip\" />
 
-      <label for=\"keywords\">Keywords (comma-separated)</label>
-      <textarea id=\"keywords\" name=\"keywords\" rows=\"2\" placeholder=\"sunset, portrait, abstract\"></textarea>
+      <label for=\"keywords_zip\">Upload keywords ZIP (matching .txt files, e.g., image0001.txt)</label>
+      <input type=\"file\" id=\"keywords_zip\" name=\"keywords_zip\" accept=\".zip\" />
 
-      <label for=\"descriptions\">Optional: JSON mapping of filenames to descriptions</label>
-      <textarea id=\"descriptions\" name=\"descriptions\" rows=\"4\" placeholder=\"{\"image1.png\": \"A red flower\"}\"></textarea>
-
+      <p style=\"color:#444;\">Keyword filenames should match images (image0001.png + image0001.txt).</p>
       <button type=\"submit\">Prepare training data</button>
     </form>
     {% if train_status %}
