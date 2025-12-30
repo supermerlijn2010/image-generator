@@ -6,10 +6,17 @@ This repository contains two lightweight Streamlit applications that let you exp
 * **Generate an image**: Enter a prompt to create a placeholder image that encodes the text into a colorized background. The image renders directly in the UI.
 * **Train the image model**: Upload a ZIP archive of your own images and optional descriptions. The app extracts the files, stores them under `generator_app/data/training_runs/`, and saves metadata you can feed into a training backend.
 
-Run the app:
+Run the app locally:
 ```bash
 pip install -r requirements.txt
 streamlit run generator_app/app.py
+```
+
+Run it on a server for remote access (replace `SERVER_IP` with your machine's address):
+```bash
+pip install -r requirements.txt
+./scripts/run_generator_server.sh
+# Then visit http://SERVER_IP:3000 from your laptop
 ```
 
 ## Folder 2 – Image Labeler (`labeler_app`)
@@ -18,10 +25,17 @@ streamlit run generator_app/app.py
 * **Label images automatically**: Generates basic labels by matching keywords to filenames and saves them to JSON.
 * **Train a model manually**: Walks through the dataset, lets you assign keywords per image, and saves labeled data for downstream training.
 
-Run the app:
+Run the app locally:
 ```bash
 pip install -r requirements.txt
 streamlit run labeler_app/app.py
+```
+
+Run it on a server for remote access (uses port 3001 to avoid clashing with the generator):
+```bash
+pip install -r requirements.txt
+./scripts/run_labeler_server.sh
+# Then visit http://SERVER_IP:3001 from your laptop
 ```
 
 ## Dependencies
